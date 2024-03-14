@@ -86,7 +86,7 @@ SERVER_EXPORT bool audio_acquire(const char * device_name)
                  &gReservedDevice[gReserveCount].reserved_device,
                  gConnection,
                  device_name,
-                 "Jack audio server",
+                 "MOD Desktop",
                  INT32_MAX,
                  NULL,
                  &error)) < 0) {
