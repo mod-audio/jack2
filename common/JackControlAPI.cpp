@@ -458,10 +458,7 @@ jackctl_internals_load(
 
     descriptor_node_ptr = jack_internals_load(NULL);
     if (descriptor_node_ptr == NULL)
-    {
-        jack_error("Could not find any internals in driver directory!");
         return false;
-    }
 
     while (descriptor_node_ptr != NULL)
     {

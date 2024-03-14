@@ -670,10 +670,6 @@ JSList* jack_internals_load(JSList * internals)
 
     } while (FindNextFileW(file, &filedata));
 
-    if (!driver_list) {
-        jack_error ("Could not find any internals in %s!", driver_dir);
-    }
-
  error:
     if (driver_dir) {
         free(driver_dir);
@@ -736,11 +732,6 @@ JSList* jack_internals_load(JSList * internals)
     if (err) {
         jack_error ("Error closing internal directory %s: %s\n",
                     driver_dir, strerror (errno));
-    }
-
-    if (!driver_list) {
-        jack_error ("Could not find any internals in %s!", driver_dir);
-        return NULL;
     }
 
     return driver_list;
