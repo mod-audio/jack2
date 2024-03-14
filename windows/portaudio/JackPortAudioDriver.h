@@ -49,7 +49,11 @@ class JackPortAudioDriver :
         PaDeviceIndex fInputDevice;
         PaDeviceIndex fOutputDevice;
         PortAudioDevices* fPaDevices;
+#ifdef __linux__
+        int fCaptureMidiPort;
+        int fPlaybackMidiPort;
         jack_native_thread_t fReservationLoopThread;
+#endif
 
         static int Render(const void* inputBuffer, void* outputBuffer,
                           unsigned long framesPerBuffer,
@@ -69,6 +73,9 @@ class JackPortAudioDriver :
 #endif
                 JackAudioDriver(name, alias, engine, table), fStream(NULL), fInputBuffer(NULL), fOutputBuffer(NULL),
                 fInputDevice(paNoDevice), fOutputDevice(paNoDevice), fPaDevices(pa_devices)
+#ifdef __linux__
+                , fCaptureMidiPort(0), fPlaybackMidiPort(0)
+#endif
         {}
 
         virtual ~JackPortAudioDriver()
