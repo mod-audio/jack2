@@ -418,7 +418,11 @@ public:
        #endif
 
         fIsProcessing = fIsRunning = true;
-        return JackThread::StartImp(&fProcessThread, 80, 1, on_process, this);
+
+        if (JackThread::StartImp(&fProcessThread, 80, 1, on_process, this) == 0)
+            return true;
+
+        return JackThread::StartImp(&fProcessThread, 0, 0, on_process, this);
     }
 
     int Stop() override
