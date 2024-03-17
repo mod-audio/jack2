@@ -8,8 +8,7 @@
 #include "JackMidiPort.h"
 #include "JackTools.h"
 
-#ifdef _WIN32
-#else
+#ifndef _WIN32
 # include <fcntl.h>
 # include <sys/mman.h>
 # ifdef __APPLE__
@@ -34,7 +33,7 @@ namespace Jack
 #ifdef __APPLE__
 static void terminateHandler(void*)
 {
-    printf("Desktop driver parent has died, terminating ourselves now\n");
+    printf("MOD Desktop driver parent has died, terminating ourselves now\n");
     fflush(stdout);
     kill(getpid(), SIGTERM);
 }
@@ -95,6 +94,40 @@ class ModDesktopAudioDriver : public JackAudioDriver
     mach_port_t task = MACH_PORT_NULL;
     semaphore_t sem1 = MACH_PORT_NULL;
     semaphore_t sem2 = MACH_PORT_NULL;
+    mach_port_t port1 = MACH_PORT_NULL;
+    mach_port_t port2 = MACH_PORT_NULL;
+
+    bool connectport(const mach_port_t port, semaphore_t* const sem)
+    {
+        mach_port_t reqport;
+
+        if (mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, &reqport) != KERN_SUCCESS)
+            return false;
+
+        struct {
+            mach_msg_header_t hdr;
+            mach_msg_trailer_t trailer;
+        } msg;
+
+        msg.hdr.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
+        msg.hdr.msgh_local_port = reqport;
+        msg.hdr.msgh_remote_port = port;
+
+        if (mach_msg(&msg.hdr, MACH_SEND_MSG, sizeof(msg.hdr), 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL) != MACH_MSG_SUCCESS)
+        {
+            mach_port_destroy(task, reqport);
+            return false;
+        }
+
+        if (mach_msg(&msg.hdr, MACH_RCV_MSG, 0, sizeof(msg), reqport, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL) != MACH_MSG_SUCCESS)
+        {
+            mach_port_destroy(task, reqport);
+            return false;
+        }
+
+        *sem = msg.hdr.msgh_remote_port;
+        return true;
+    }
 
     void post()
     {
@@ -289,21 +322,25 @@ public:
        #ifdef __APPLE__
         task = mach_task_self();
 
-        mach_port_t bootport1;
-        if (task_get_bootstrap_port(task, &bootport1) != KERN_SUCCESS ||
-            bootstrap_look_up(bootport1, fShmData->bootname1, &sem1) != KERN_SUCCESS)
+        mach_port_t bootport;
+        if (task_get_bootstrap_port(task, &bootport) != KERN_SUCCESS)
         {
             Close();
             jack_error("Can't open default MOD Desktop driver 4");
             return -1;
         }
 
-        mach_port_t bootport2;
-        if (task_get_bootstrap_port(task, &bootport2) != KERN_SUCCESS ||
-            bootstrap_look_up(bootport2, fShmData->bootname2, &sem2) != KERN_SUCCESS)
+        if (bootstrap_look_up(bootport, fShmData->bootname1, &port1) != KERN_SUCCESS || !connectport(port1, &sem1))
         {
             Close();
             jack_error("Can't open default MOD Desktop driver 5");
+            return -1;
+        }
+
+        if (bootstrap_look_up(bootport, fShmData->bootname2, &port2) != KERN_SUCCESS || !connectport(port2, &sem2))
+        {
+            Close();
+            jack_error("Can't open default MOD Desktop driver 6");
             return -1;
         }
        #endif
@@ -319,6 +356,18 @@ public:
         JackAudioDriver::Close();
 
        #ifdef __APPLE__
+        if (port1 != MACH_PORT_NULL)
+        {
+            mach_port_deallocate(task, port1);
+            port1 = MACH_PORT_NULL;
+        }
+
+        if (port2 != MACH_PORT_NULL)
+        {
+            mach_port_deallocate(task, port2);
+            port2 = MACH_PORT_NULL;
+        }
+
         if (sem1 != MACH_PORT_NULL)
         {
             semaphore_destroy(task, sem1);

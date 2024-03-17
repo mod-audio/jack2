@@ -46,9 +46,6 @@ class SERVER_EXPORT JackMachSemaphore : public detail::JackSynchro
          * (server) or Connect()ed (client). */
         semaphore_t fSemaphore;
 
-        /*! \brief The bootstrap port for this task, or MACH_PORT_NULL if not yet obtained. */
-        mach_port_t fBootPort;
-
         /*! \brief The IPC port used to pass the semaphore port from the server to the client, and
          * for the client to request that this occurs. MACH_PORT_NULL if not yet created (server) or
          * looked up (client). */
@@ -70,7 +67,6 @@ class SERVER_EXPORT JackMachSemaphore : public detail::JackSynchro
         JackMachSemaphore():
             JackSynchro(),
             fSemaphore(MACH_PORT_NULL),
-            fBootPort(MACH_PORT_NULL),
             fServicePort(MACH_PORT_NULL),
             fSemServer(NULL),
             fThreadSemServer(NULL)

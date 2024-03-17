@@ -153,13 +153,12 @@ bool JackMachSemaphore::Allocate(const char* client_name, const char* server_nam
     BuildName(client_name, server_name, fName, sizeof(fName));
 
     mach_port_t task = mach_task_self();
+    mach_port_t bootport;
     kern_return_t res;
 
-    if (fBootPort == MACH_PORT_NULL) {
-        if ((res = task_get_bootstrap_port(task, &fBootPort)) != KERN_SUCCESS) {
-            jack_mach_error(res, "can't find bootstrap mach port");
-            return false;
-        }
+    if ((res = task_get_bootstrap_port(task, &bootport)) != KERN_SUCCESS) {
+        jack_mach_error(res, "can't find bootstrap mach port");
+        return false;
     }
 
     if ((res = semaphore_create(task, &fSemaphore, SYNC_POLICY_FIFO, value)) != KERN_SUCCESS) {
@@ -185,7 +184,7 @@ bool JackMachSemaphore::Allocate(const char* client_name, const char* server_nam
         return false;
     }
 
-    if ((res = bootstrap_register(fBootPort, fName, fServicePort)) != KERN_SUCCESS) {
+    if ((res = bootstrap_register(bootport, fName, fServicePort)) != KERN_SUCCESS) {
         jack_mach_bootstrap_err(res, "can't register IPC port with bootstrap server", fName);
 
         // Cleanup created semaphore & mach port
@@ -224,6 +223,7 @@ bool JackMachSemaphore::ConnectInput(const char* client_name, const char* server
     BuildName(client_name, server_name, fName, sizeof(fName));
 
     mach_port_t task = mach_task_self();
+    mach_port_t bootport;
     kern_return_t res;
 
     if (fSemaphore != MACH_PORT_NULL) {
@@ -231,14 +231,12 @@ bool JackMachSemaphore::ConnectInput(const char* client_name, const char* server
         return true;
     }
 
-    if (fBootPort == MACH_PORT_NULL) {
-        if ((res = task_get_bootstrap_port(task, &fBootPort)) != KERN_SUCCESS) {
-            jack_mach_error(res, "can't find bootstrap port");
-            return false;
-        }
+    if ((res = task_get_bootstrap_port(task, &bootport)) != KERN_SUCCESS) {
+        jack_mach_error(res, "can't find bootstrap port");
+        return false;
     }
 
-    if ((res = bootstrap_look_up(fBootPort, fName, &fServicePort)) != KERN_SUCCESS) {
+    if ((res = bootstrap_look_up(bootport, fName, &fServicePort)) != KERN_SUCCESS) {
         jack_mach_bootstrap_err(res, "can't find IPC service port to request semaphore", fName);
         return false;
     }
