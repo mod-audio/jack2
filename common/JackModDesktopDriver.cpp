@@ -83,6 +83,7 @@ class ModDesktopAudioDriver : public JackAudioDriver
     static constexpr const size_t kDataSize = sizeof(Data) + sizeof(float) * 128 * 2;
 
     Data* fShmData;
+    const unsigned int fShmPort;
 
    #ifdef _WIN32
     HANDLE fShm;
@@ -179,9 +180,10 @@ class ModDesktopAudioDriver : public JackAudioDriver
     }
 
 public:
-    ModDesktopAudioDriver(const char* name, const char* alias, JackLockedEngine* engine, JackSynchro* table)
+    ModDesktopAudioDriver(const char* name, const char* alias, JackLockedEngine* engine, JackSynchro* table, unsigned int shmport)
         : JackAudioDriver(name, alias, engine, table),
           fShmData(nullptr),
+          fShmPort(shmport),
          #ifdef _WIN32
           fShm(nullptr),
          #else
@@ -222,9 +224,12 @@ public:
         }
 
         void* ptr;
+        char shmName[32] = {};
 
       #ifdef _WIN32
-        fShm = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "/mod-desktop-test1");
+        std::snprintf(shmName, 31, "Local\\mod-desktop-shm-%d", fShmPort);
+
+        fShm = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, shmName);
         if (fShm == nullptr)
         {
             Close();
@@ -242,7 +247,9 @@ public:
 
         VirtualLock(ptr, kDataSize);
       #else
-        fShmFd = shm_open("/mod-desktop-test1", O_RDWR, 0);
+        std::snprintf(shmName, 31, "/mod-desktop-shm-%d", fShmPort);
+
+        fShmFd = shm_open(shmName, O_RDWR, 0);
         if (fShmFd < 0)
         {
             Close();
@@ -521,6 +528,9 @@ SERVER_EXPORT jack_driver_desc_t* driver_get_descriptor()
     value.ui = 128;
     jack_driver_descriptor_add_parameter(desc, &filler, "period", 'p', JackDriverParamUInt, &value, nullptr, "Frames per period", nullptr);
 
+    value.ui = 0;
+    jack_driver_descriptor_add_parameter(desc, &filler, "shmport", 's', JackDriverParamUInt, &value, nullptr, "Shared memory port number", nullptr);
+
     return desc;
 }
 
@@ -528,6 +538,7 @@ SERVER_EXPORT Jack::JackDriverClientInterface* driver_initialize(Jack::JackLocke
 {
     jack_nframes_t rate = 48000;
     jack_nframes_t period = 128;
+    unsigned int shmport = 0;
 
     for (const JSList* node = params; node; node = jack_slist_next(node))
     {
@@ -541,10 +552,19 @@ SERVER_EXPORT Jack::JackDriverClientInterface* driver_initialize(Jack::JackLocke
         case 'p':
             period = param->value.ui;
             break;
+        case 's':
+            shmport = param->value.ui;
+            break;
         }
     }
 
-    Jack::JackDriverClientInterface* driver = new Jack::ModDesktopAudioDriver("system", "mod-desktop", engine, table);
+    if (shmport == 0)
+    {
+        jack_error("Missing or invalid shared memory port number");
+        return nullptr;
+    }
+
+    Jack::JackDriverClientInterface* driver = new Jack::ModDesktopAudioDriver("system", "mod-desktop", engine, table, shmport);
 
     if (driver->Open(period, rate, true, true, 2, 2, false, "", "", 0, 0) == 0)
     {
