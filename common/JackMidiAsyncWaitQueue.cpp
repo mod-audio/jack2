@@ -25,11 +25,17 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
 using Jack::JackMidiAsyncWaitQueue;
 
+static bool areFutexesOptimizedForInternalClients()
+{
+    static bool ret = (getenv("JACK_NO_OPTIMIZATIONS") == NULL);
+    return ret;
+}
+
 JackMidiAsyncWaitQueue::JackMidiAsyncWaitQueue(size_t max_bytes,
                                                size_t max_messages):
     JackMidiAsyncQueue(max_bytes, max_messages)
 {
-    if (semaphore.Allocate("JackMidiAsyncWaitQueue", "midi-thread", 0)) {
+    if (semaphore.Allocate("JackMidiAsyncWaitQueue", "midi-thread", 0, areFutexesOptimizedForInternalClients())) {
         throw std::bad_alloc();
     }
 }

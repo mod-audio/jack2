@@ -40,6 +40,12 @@ extern const char* JACK_METADATA_PRETTY_NAME;
 namespace Jack
 {
 
+static bool areFutexesOptimizedForInternalClients()
+{
+    static bool ret = (getenv("JACK_NO_OPTIMIZATIONS") == NULL);
+    return ret;
+}
+
 JackEngine::JackEngine(JackGraphManager* manager,
                        JackSynchro* table,
                        JackEngineControl* control,
@@ -635,7 +641,7 @@ int JackEngine::ClientExternalOpen(const char* name, int pid, jack_uuid_t uuid, 
 
     JackExternalClient* client = new JackExternalClient();
 
-    if (!fSynchroTable[refnum].Allocate(real_name, fEngineControl->fServerName, 0)) {
+    if (!fSynchroTable[refnum].Allocate(real_name, fEngineControl->fServerName, 0, false)) {
         jack_error("Cannot allocate synchro");
         goto error;
     }
@@ -685,7 +691,7 @@ int JackEngine::ClientInternalOpen(const char* name, int* ref, JackEngineControl
         goto error;
     }
 
-    if (!fSynchroTable[refnum].Allocate(name, fEngineControl->fServerName, 0)) {
+    if (!fSynchroTable[refnum].Allocate(name, fEngineControl->fServerName, 0, areFutexesOptimizedForInternalClients())) {
         jack_error("Cannot allocate synchro");
         goto error;
     }

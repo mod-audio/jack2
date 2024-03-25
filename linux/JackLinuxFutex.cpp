@@ -48,11 +48,15 @@ void JackLinuxFutex::BuildName(const char* client_name, const char* server_name,
 {
     char ext_client_name[SYNC_MAX_NAME_SIZE + 1];
     JackTools::RewriteName(client_name, ext_client_name);
+#ifdef __MOD_DEVICES__
+    snprintf(res, size, "jack_sem.%s", ext_client_name);
+#else
     if (fPromiscuous) {
         snprintf(res, size, "jack_sem.%s_%s", server_name, ext_client_name);
     } else {
         snprintf(res, size, "jack_sem.%d_%s_%s", JackTools::GetUID(), server_name, ext_client_name);
     }
+#endif
 }
 
 bool JackLinuxFutex::Signal()
@@ -78,7 +82,17 @@ bool JackLinuxFutex::Signal()
 
 bool JackLinuxFutex::SignalAll()
 {
-    return Signal();
+    if (!fFutex) {
+        jack_error("JackLinuxFutex::Signal name = %s already deallocated!!", fName);
+        return false;
+    }
+
+    if (fFlush) {
+        return true;
+    }
+
+    ::syscall(SYS_futex, fFutex, fFutex->internal ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE, INT32_MAX, NULL, NULL, 0);
+    return true;
 }
 
 bool JackLinuxFutex::Wait()

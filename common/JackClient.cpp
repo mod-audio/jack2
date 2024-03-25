@@ -41,6 +41,37 @@ namespace Jack
 
 #define IsRealTime() ((fProcess != NULL) | (fThreadFun != NULL) | (fSync != NULL) | (fTimebase != NULL))
 
+/* Disables denormal numbers in floating point calculation. Denormal numbers
+ * happens often in IIR filters, and it can be very slow.
+ */
+/* Taken from cras/src/dsp/dsp_util.c in Chromium OS code.
+ * Copyright (c) 2013 The Chromium OS Authors. */
+static void dsp_enable_flush_denormal_to_zero()
+{
+#if defined(__i386__) || defined(__x86_64__)
+        unsigned int mxcsr;
+        mxcsr = __builtin_ia32_stmxcsr();
+        __builtin_ia32_ldmxcsr(mxcsr | 0x8040);
+#elif defined(__aarch64__)
+        uint64_t cw;
+        __asm__ __volatile__ (
+                "mrs    %0, fpcr                            \n"
+                "orr    %0, %0, #0x1000000                  \n"
+                "msr    fpcr, %0                            \n"
+                "isb                                        \n"
+                : "=r"(cw) :: "memory");
+#elif defined(__arm__)
+        uint32_t cw;
+        __asm__ __volatile__ (
+                "vmrs   %0, fpscr                           \n"
+                "orr    %0, %0, #0x1000000                  \n"
+                "vmsr   fpscr, %0                           \n"
+                : "=r"(cw) :: "memory");
+#else
+#warning "Don't know how to disable denorms. Performace may suffer."
+#endif
+}
+
 JackClient::JackClient(JackSynchro* table):fThread(this)
 {
     fSynchroTable = table;
