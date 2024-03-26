@@ -9,15 +9,16 @@
 #include "JackTools.h"
 
 #ifndef _WIN32
+# include <cerrno>
 # include <fcntl.h>
 # include <sys/mman.h>
 # ifdef __APPLE__
 #  include <dispatch/dispatch.h>
-#  include <mach/mach.h>
-#  include <mach/semaphore.h>
-#  include <servers/bootstrap.h>
+extern "C" {
+int __ulock_wait(uint32_t operation, void* addr, uint64_t value, uint32_t timeout_us);
+int __ulock_wake(uint32_t operation, void* addr, uint64_t value);
+}
 # else
-#  include <cerrno>
 #  include <syscall.h>
 #  include <sys/prctl.h>
 #  include <sys/time.h>
@@ -62,10 +63,7 @@ class ModDesktopAudioDriver : public JackAudioDriver
     struct Data {
         uint32_t magic;
         int32_t padding1;
-       #if defined(__APPLE__)
-        char bootname1[32];
-        char bootname2[32];
-       #elif defined(_WIN32)
+       #ifdef _WIN32
         HANDLE sem1;
         HANDLE sem2;
        #else
@@ -90,56 +88,7 @@ class ModDesktopAudioDriver : public JackAudioDriver
     int fShmFd;
    #endif
 
-   #if defined(__APPLE__)
-    mach_port_t task = MACH_PORT_NULL;
-    semaphore_t sem1 = MACH_PORT_NULL;
-    semaphore_t sem2 = MACH_PORT_NULL;
-    mach_port_t port1 = MACH_PORT_NULL;
-    mach_port_t port2 = MACH_PORT_NULL;
-
-    bool connectport(const mach_port_t port, semaphore_t* const sem)
-    {
-        mach_port_t reqport;
-
-        if (mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, &reqport) != KERN_SUCCESS)
-            return false;
-
-        struct {
-            mach_msg_header_t hdr;
-            mach_msg_trailer_t trailer;
-        } msg;
-
-        msg.hdr.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
-        msg.hdr.msgh_local_port = reqport;
-        msg.hdr.msgh_remote_port = port;
-
-        if (mach_msg(&msg.hdr, MACH_SEND_MSG, sizeof(msg.hdr), 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL) != MACH_MSG_SUCCESS)
-        {
-            mach_port_destroy(task, reqport);
-            return false;
-        }
-
-        if (mach_msg(&msg.hdr, MACH_RCV_MSG, 0, sizeof(msg), reqport, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL) != MACH_MSG_SUCCESS)
-        {
-            mach_port_destroy(task, reqport);
-            return false;
-        }
-
-        *sem = msg.hdr.msgh_remote_port;
-        return true;
-    }
-
-    void post()
-    {
-        semaphore_signal(sem2);
-    }
-
-    bool wait()
-    {
-        const mach_timespec timeout = { 1, 0 };
-        return semaphore_timedwait(sem1, timeout) == KERN_SUCCESS;
-    }
-   #elif defined(_WIN32)
+   #ifdef _WIN32
     void post()
     {
         ReleaseSemaphore(fShmData->sem2, 1, nullptr);
@@ -155,19 +104,31 @@ class ModDesktopAudioDriver : public JackAudioDriver
         const bool unlocked = __sync_bool_compare_and_swap(&fShmData->sem2, 0, 1);
         if (! unlocked)
             return;
-        ::syscall(__NR_futex, &fShmData->sem2, FUTEX_WAKE, 1, nullptr, nullptr, 0);
+       #ifdef __APPLE__
+        __ulock_wake(0x1000003, &fShmData->sem2, 0);
+       #else
+        syscall(__NR_futex, &fShmData->sem2, FUTEX_WAKE, 1, nullptr, nullptr, 0);
+       #endif
     }
 
     bool wait()
     {
+       #ifdef __APPLE__
+        const uint32_t timeout = 1000000;
+       #else
         const timespec timeout = { 1, 0 };
+       #endif
 
         for (;;)
         {
             if (__sync_bool_compare_and_swap(&fShmData->sem1, 1, 0))
                 return true;
 
-            if (::syscall(__NR_futex, &fShmData->sem1, FUTEX_WAIT, 0, &timeout, nullptr, 0) != 0)
+           #ifdef __APPLE__
+            if (__ulock_wait(0x3, &fShmData->sem1, 0, timeout) != 0)
+           #else
+            if (syscall(__NR_futex, &fShmData->sem1, FUTEX_WAIT, 0, &timeout, nullptr, 0) != 0)
+           #endif
                 if (errno != EAGAIN && errno != EINTR)
                     return false;
         }
@@ -319,32 +280,6 @@ public:
             return -1;
         }
 
-       #ifdef __APPLE__
-        task = mach_task_self();
-
-        mach_port_t bootport;
-        if (task_get_bootstrap_port(task, &bootport) != KERN_SUCCESS)
-        {
-            Close();
-            jack_error("Can't open default MOD Desktop driver 4");
-            return -1;
-        }
-
-        if (bootstrap_look_up(bootport, fShmData->bootname1, &port1) != KERN_SUCCESS || !connectport(port1, &sem1))
-        {
-            Close();
-            jack_error("Can't open default MOD Desktop driver 5");
-            return -1;
-        }
-
-        if (bootstrap_look_up(bootport, fShmData->bootname2, &port2) != KERN_SUCCESS || !connectport(port2, &sem2))
-        {
-            Close();
-            jack_error("Can't open default MOD Desktop driver 6");
-            return -1;
-        }
-       #endif
-
         return 0;
     }
 
@@ -354,32 +289,6 @@ public:
         fflush(stdout);
 
         JackAudioDriver::Close();
-
-       #ifdef __APPLE__
-        if (port1 != MACH_PORT_NULL)
-        {
-            mach_port_deallocate(task, port1);
-            port1 = MACH_PORT_NULL;
-        }
-
-        if (port2 != MACH_PORT_NULL)
-        {
-            mach_port_deallocate(task, port2);
-            port2 = MACH_PORT_NULL;
-        }
-
-        if (sem1 != MACH_PORT_NULL)
-        {
-            semaphore_destroy(task, sem1);
-            sem1 = MACH_PORT_NULL;
-        }
-
-        if (sem2 != MACH_PORT_NULL)
-        {
-            semaphore_destroy(task, sem2);
-            sem2 = MACH_PORT_NULL;
-        }
-       #endif
 
        #ifdef _WIN32
         if (fShmData != nullptr)
@@ -467,16 +376,21 @@ public:
         if (JackAudioDriver::Start() != 0)
             return -1;
 
-       #if 0 // def __APPLE__
-        fEngineControl->fPeriod = fEngineControl->fPeriodUsecs * 1000;
-        fEngineControl->fComputation = JackTools::ComputationMicroSec(fEngineControl->fBufferSize) * 1000;
-        fEngineControl->fConstraint = fEngineControl->fPeriodUsecs * 1000;
-       #endif
-
         fIsProcessing = fIsRunning = true;
 
         if (JackThread::StartImp(&fProcessThread, 80, 1, on_process, this) == 0)
-            return true;
+        {
+           #ifdef __APPLE__
+            fEngineControl->fPeriod = fEngineControl->fConstraint = fEngineControl->fPeriodUsecs * 1000;
+            fEngineControl->fComputation = JackTools::ComputationMicroSec(fEngineControl->fBufferSize) * 1000;
+
+            JackThread::AcquireRealTimeImp(fProcessThread,
+                                           fEngineControl->fPeriod,
+                                           fEngineControl->fComputation,
+                                           fEngineControl->fConstraint);
+           #endif
+            return 0;
+        }
 
         return JackThread::StartImp(&fProcessThread, 0, 0, on_process, this);
     }
